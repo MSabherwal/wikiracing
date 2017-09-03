@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"interview_questions/segment/wikiracing/util/wiki"
 	"sync"
+	"time"
 )
 
 type SearchForward struct {
@@ -20,10 +21,22 @@ func LinkAggregator(ctx context.Context, links <-chan string, aggregatedStrings 
 	go func() {
 		defer wg.Done()
 		var toBeSearched []string
+		timer := time.NewTimer(time.Second * 1)
+		flushCnt := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-timer.C:
+				fmt.Println("linkAggregator hasn't rcvd data in 1 second! flushing.")
+				if flushCnt >= 2 || len(toBeSearched) == 0 {
+					fmt.Println("second attempt to flush or no links have been rcvd since last flush! rtrning")
+					return
+				}
+				aggregate <- toBeSearched
+				toBeSearched = []string{}
+				flushCnt++
+
 			case link := <-links:
 				//if already aggregated, ignore
 				// maybe redundant?
@@ -35,6 +48,12 @@ func LinkAggregator(ctx context.Context, links <-chan string, aggregatedStrings 
 					aggregate <- toBeSearched
 					toBeSearched = []string{}
 				}
+				//reset timer
+				if !timer.Stop() {
+					<-timer.C
+				}
+				timer.Reset(time.Second * 1)
+				flushCnt = 0
 
 			}
 		}
@@ -73,7 +92,7 @@ func Search(from, to string, wiki *wiki.Wikipedia) []string {
 
 	aggStrings := NewConcurrentSet()
 
-	numAggregators := 2
+	numAggregators := 1
 	searchWG.Add(numAggregators)
 
 	for i := 0; i < numAggregators; i++ {
@@ -102,6 +121,7 @@ func Search(from, to string, wiki *wiki.Wikipedia) []string {
 
 	crntSite := to
 	fp := si.sf.ForwardPath
+	results = append(results, crntSite)
 	var next string
 	for {
 		next, _ = fp.Get(crntSite)
@@ -111,8 +131,11 @@ func Search(from, to string, wiki *wiki.Wikipedia) []string {
 		}
 		crntSite = next
 	}
-
-	return results
+	resultsAsc := []string{}
+	for i := len(results); i > 0; i-- {
+		resultsAsc = append(resultsAsc, results[i-1])
+	}
+	return resultsAsc
 }
 
 // to start populating the loop
@@ -120,62 +143,61 @@ func firstQuerier(si *SearchInput, start string) {
 
 	go func() {
 		defer si.wg.Done()
-		for {
 
-			qi := &wiki.QueryInput{
-				Prop:   "links",
-				Titles: []string{start},
-				Prefix: "pl",
-				Cont:   "",
+		qi := &wiki.QueryInput{
+			Prop:   "links",
+			Titles: []string{start},
+			Prefix: "pl",
+			Cont:   "",
+		}
+
+		for {
+			resp, err := si.wiki.Query(qi)
+			if err != nil {
+				panic(err)
 			}
 
-			for {
-				resp, err := si.wiki.Query(qi)
-				if err != nil {
-					panic(err)
+			for _, page := range resp.Query.Pages {
+				select {
+				case <-si.ctx.Done():
+					return
+				default:
 				}
+				from := page.Title
+				for _, to := range page.Links {
+					// if path already exists to this node, ignore
+					if si.sf.ForwardPath.Exists(to.Title) {
+						continue
+					}
 
-				for _, page := range resp.Query.Pages {
+					si.sf.ForwardPath.Set(to.Title, from)
+					// found end page!
+					if to.Title == si.sf.end {
+						si.cancel()
+						si.done <- struct{}{}
+						return
+					}
 					select {
 					case <-si.ctx.Done():
 						return
 					default:
-					}
-					from := page.Title
-					for _, to := range page.Links {
-						// if path already exists to this node, ignore
-						if si.sf.ForwardPath.Exists(to.Title) {
-							continue
-						}
-
-						si.sf.ForwardPath.Set(to.Title, from)
-						// found end page!
-						if to.Title == si.sf.end {
-							si.cancel()
-							si.done <- struct{}{}
-							return
-						}
-						select {
-						case <-si.ctx.Done():
-							return
-						default:
-
-						}
-
-						//send title
-						si.linkAgg <- to.Title
 
 					}
-				}
-				//determine if you need to continue
-				if !resp.ShouldContinue(qi.Prefix) {
-					break
-				}
 
-				qi.Cont = resp.ContinueVal(qi.Prefix)
+					//send title
+					si.linkAgg <- to.Title
+
+				}
+			}
+			//determine if you need to continue
+			if !resp.ShouldContinue(qi.Prefix) {
+				break
 			}
 
+			qi.Cont = resp.ContinueVal(qi.Prefix)
 		}
+		fmt.Println("finishing first querier")
+
 	}()
 
 	return
@@ -184,19 +206,25 @@ func firstQuerier(si *SearchInput, start string) {
 func querier(si *SearchInput) {
 
 	go func() {
+		timer := time.NewTimer(time.Second * 2)
 		defer si.wg.Done()
 		for {
-			for batch := range si.batchTitles {
+			select {
+			case <-si.ctx.Done():
+				return
+			case <-timer.C:
+				fmt.Println("querier returning from no data for 2 sec")
+				return
+			case batch := <-si.batchTitles:
+
 				qi := &wiki.QueryInput{
 					Prop:   "links",
 					Titles: batch,
 					Prefix: "pl",
 					Cont:   "",
 				}
-				fmt.Println("titles:", batch)
 
 				for {
-					fmt.Println("qi cont:", qi.Cont)
 					resp, err := si.wiki.Query(qi)
 					if err != nil {
 						panic(err)
@@ -239,8 +267,15 @@ func querier(si *SearchInput) {
 					}
 					qi.Cont = resp.ContinueVal(qi.Prefix)
 				}
+
+				//reset timer
+				if !timer.Stop() {
+					<-timer.C
+				}
+				timer.Reset(time.Second * 2)
 			}
 		}
+
 	}()
 
 	return
