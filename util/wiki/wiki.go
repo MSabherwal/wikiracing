@@ -26,10 +26,36 @@ func New() *Wikipedia {
 }
 
 type QueryInput struct {
-	Prefix string
-	Prop   string
+	prefix string
+	prop   string
 	Titles []string
 	Cont   string
+}
+
+func (qi *QueryInput) Prefix() string {
+	return qi.prefix
+}
+
+func (qi *QueryInput) Prop() string {
+	return qi.prop
+}
+
+func NewLinksQuery(titles []string) *QueryInput {
+	return &QueryInput{
+		prefix: "pl",
+		prop:   "links",
+		Titles: titles,
+		Cont:   "",
+	}
+}
+
+func NewLinksHereQuery(titles []string) *QueryInput {
+	return &QueryInput{
+		prefix: "lh",
+		prop:   "linkshere",
+		Titles: titles,
+		Cont:   "",
+	}
 }
 
 // Query ...
@@ -51,14 +77,14 @@ func (qi *QueryInput) queryURI() *url.URL {
 
 	values := url.Values{}
 
-	values.Add("prop", qi.Prop)
+	values.Add("prop", qi.prop)
 	values.Add("format", "json")
 	values.Add("action", "query")
 	values.Add("titles", strings.Join(qi.Titles, "|"))
 
-	values.Add(fmt.Sprintf("%slimit", qi.Prefix), "max")
+	values.Add(fmt.Sprintf("%slimit", qi.prefix), "max")
 	if len(qi.Cont) > 0 {
-		values.Add(fmt.Sprintf("%scontinue", qi.Prefix), qi.Cont)
+		values.Add(fmt.Sprintf("%scontinue", qi.prefix), qi.Cont)
 	}
 
 	uri.RawQuery = values.Encode()
