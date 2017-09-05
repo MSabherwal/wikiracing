@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-type DonePath struct {
-	Path string
-	Word string
-}
-
 func LinkAggregator(ctx context.Context, links <-chan string, aggregatedStrings *ConcurrentSet, wg *sync.WaitGroup, aggregate chan []string) {
 
 	go func() {
@@ -57,3 +52,19 @@ func LinkAggregator(ctx context.Context, links <-chan string, aggregatedStrings 
 	}()
 	return
 }
+
+//DonePath is the solution to the race
+type DonePath struct {
+	Path PathType
+	Word string
+}
+
+//PathType is the path through which a solution was found
+type PathType int
+
+//Types of paths taken to solution
+const (
+	Full PathType = iota
+	Midpoint
+	Timeout
+)

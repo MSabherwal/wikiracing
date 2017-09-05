@@ -22,7 +22,7 @@ type SearchForwardInput struct {
 	sb          *SearchBackwards
 	wiki        *wiki.Wikipedia
 	linkAgg     chan<- string
-	done        chan struct{}
+	done        chan *DonePath
 	cancel      context.CancelFunc
 	ctx         context.Context
 	wg          *sync.WaitGroup
@@ -39,7 +39,7 @@ func SearchForwardTo(from, to string, wiki *wiki.Wikipedia) []string {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
-	done := make(chan struct{})
+	done := make(chan *DonePath)
 	searchWG := &sync.WaitGroup{}
 
 	// create chans
@@ -72,33 +72,49 @@ func SearchForwardTo(from, to string, wiki *wiki.Wikipedia) []string {
 		ForwardQuerier(si)
 	}
 	firstForwardQuerier(si, from)
-	go func() {
-		ticker := time.NewTicker(time.Second * 1)
-		for range ticker.C {
-			fmt.Println("len batch: ", len(batch))
-			fmt.Println("len linkAgg: ", len(linkAgg))
+	// go func() {
+	// 	ticker := time.NewTicker(time.Second * 1)
+	// 	for range ticker.C {
+	// 		fmt.Println("len batch: ", len(batch))
+	// 		fmt.Println("len linkAgg: ", len(linkAgg))
 
-		}
-	}()
-	<-done
+	// 	}
+	// }()
+	dn := <-done
 
-	crntSite := to
-	fp := si.sf.ForwardPath
-	results = append(results, crntSite)
-	var next string
-	for {
-		next, _ = fp.Get(crntSite)
-		results = append(results, next)
-		if next == from {
-			break
+	//parse results
+	path := []string{}
+	var crntSite string
+	switch dn.Path {
+	case Midpoint:
+	case Full:
+		crntSite = dn.Word
+		path = append(path, crntSite)
+		var next string
+		for crntSite != from {
+			next, _ = si.sf.ForwardPath.Get(crntSite)
+			path = append(path, next)
+			crntSite = next
 		}
-		crntSite = next
 	}
-	resultsAsc := []string{}
-	for i := len(results); i > 0; i-- {
-		resultsAsc = append(resultsAsc, results[i-1])
+
+	// crntSite := to
+	// fp := si.sf.ForwardPath
+	// results = append(results, crntSite)
+	// var next string
+	// for {
+	// 	next, _ = fp.Get(crntSite)
+	// 	results = append(results, next)
+	// 	if next == from {
+	// 		break
+	// 	}
+	// 	crntSite = next
+	// }
+
+	for i := len(path); i > 0; i-- {
+		results = append(results, path[i-1])
 	}
-	return resultsAsc
+	return results
 }
 
 // to start populating the loop
@@ -131,9 +147,18 @@ func firstForwardQuerier(si *SearchForwardInput, start string) {
 
 					si.sf.ForwardPath.Set(to.Title, from)
 					// found end page!
-					if to.Title == si.sf.end {
+					if to.Title == si.sf.end || (si.sb != nil && si.sb.BackwardPath.Exists(to.Title)) {
 						si.cancel()
-						si.done <- struct{}{}
+						var path PathType
+						if to.Title == si.sf.end {
+							path = Full
+						} else {
+							path = Midpoint
+						}
+						si.done <- &DonePath{
+							Path: path,
+							Word: to.Title,
+						}
 						return
 					}
 					select {
@@ -199,10 +224,18 @@ func ForwardQuerier(si *SearchForwardInput) {
 							si.sf.ForwardPath.Set(to.Title, from)
 							// found end page!
 
-							if to.Title == si.sf.end {
-								fmt.Println("found page!")
+							if to.Title == si.sf.end || (si.sb != nil && si.sb.BackwardPath.Exists(to.Title)) {
 								si.cancel()
-								si.done <- struct{}{}
+								var path PathType
+								if to.Title == si.sf.end {
+									path = Full
+								} else {
+									path = Midpoint
+								}
+								si.done <- &DonePath{
+									Path: path,
+									Word: to.Title,
+								}
 								return
 							}
 							select {

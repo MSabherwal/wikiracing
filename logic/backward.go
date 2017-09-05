@@ -1,5 +1,12 @@
 package logic
 
+import (
+	"context"
+	"fmt"
+	"interview_questions/segment/wikiracing/util/wiki"
+	"sync"
+	"time"
+)
 
 type SearchBackwards struct {
 	//ForwardPath keeps track of "parent" of a link
@@ -79,8 +86,8 @@ func SearchBackwardsFrom(from, to string, wiki *wiki.Wikipedia) []string {
 	path := []string{}
 	var crntWord string
 	switch dn.Path {
-	case "midpoint":
-	case "fullpath":
+	case Midpoint:
+	case Full:
 		path = append(path, dn.Word)
 		crntWord = dn.Word
 		for crntWord != to {
@@ -91,7 +98,6 @@ func SearchBackwardsFrom(from, to string, wiki *wiki.Wikipedia) []string {
 	}
 
 	results = path
-
 
 	resultsAsc := []string{}
 	for i := len(results); i > 0; i-- {
@@ -138,14 +144,14 @@ func BackwardsQuerier(si *SearchBackwardsInput) {
 							si.sb.BackwardPath.Set(from.Title, to)
 							// found end page!
 
-							if from.Title == si.sb.start || /*si.sf.ForwardPath.Exists(from.Title)*/ {
+							if from.Title == si.sb.start || (si.sf != nil && si.sf.ForwardPath.Exists(from.Title)) {
 								fmt.Println("found page!")
 								si.cancel()
-								var path string
+								var path PathType
 								if from.Title == si.sb.start {
-									path = "fullpath"
+									path = Full
 								} else {
-									path = "midpoint"
+									path = Midpoint
 								}
 								si.done <- &DonePath{
 									Path: path,
@@ -214,11 +220,11 @@ func firstBackwardsQuerier(si *SearchBackwardsInput, end string) {
 					if from.Title == si.sb.start /*|| si.sf.ForwardPath.Exists(from.Title)*/ {
 						fmt.Println("found page!")
 						si.cancel()
-						var path string
+						var path PathType
 						if from.Title == si.sb.start {
-							path = "fullpath"
+							path = Full
 						} else {
-							path = "midpoint"
+							path = Midpoint
 						}
 						si.done <- &DonePath{
 							Path: path,
@@ -247,4 +253,3 @@ func firstBackwardsQuerier(si *SearchBackwardsInput, end string) {
 
 	return
 }
-
